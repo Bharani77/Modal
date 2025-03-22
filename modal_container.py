@@ -1,4 +1,3 @@
-# modal_container.py
 import os
 from modal import Image, App, asgi_app
 import subprocess
@@ -7,7 +6,6 @@ import time
 
 # Use an environment variable for the app name, defaulting to "galaxykick-app"
 app_name = os.environ.get("MODAL_APP_NAME", "galaxykick-app")
-
 # Create a Modal app with the provided app name
 app = App(app_name)
 
@@ -43,9 +41,19 @@ def run_container_entrypoint():
 def web_app():
     from fastapi import FastAPI, Request
     from fastapi.responses import StreamingResponse
+    from fastapi.middleware.cors import CORSMiddleware
     import httpx
     
     fastapp = FastAPI()
+    
+    # Add CORS middleware to handle OPTIONS requests and add CORS headers
+    fastapp.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allows all origins, you can restrict this for security
+        allow_credentials=True,
+        allow_methods=["*"],  # Allows all methods including OPTIONS
+        allow_headers=["*"],  # Allows all headers
+    )
     
     @fastapp.on_event("startup")
     def startup_event():
@@ -76,7 +84,6 @@ def web_app():
     
     @fastapp.post("/{path:path}")
     async def post_route(path: str, request: Request):
-        from fastapi.responses import StreamingResponse
         url = f"http://localhost:7860/{path}"
         body = await request.body()
         headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
@@ -93,8 +100,14 @@ def web_app():
                     status_code=response.status_code,
                     headers=dict(response.headers)
                 )
-        finally:
-            return {"Result": "Submitted"}
+        except Exception as e:
+            return {"error": f"Failed to connect to container service: {str(e)}"}
+        
+    # You can also add an explicit OPTIONS handler if needed
+    @fastapp.options("/{path:path}")
+    async def options_route(path: str):
+        # This is handled by the CORS middleware, but adding it explicitly for clarity
+        return {}
             
     return fastapp
 
