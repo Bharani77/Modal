@@ -35,7 +35,11 @@ def run_container_entrypoint():
 # Create a web app that serves the Docker container
 @app.function(
     image=image,
-    min_containers=1
+    min_containers=1,
+    resources={
+        "cpu": 4,        # 4 CPU cores
+        "memory": 6144,  # 6GB in MB
+    }
 )
 @asgi_app()
 def web_app():
