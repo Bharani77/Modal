@@ -1,58 +1,99 @@
-from flask import Flask, render_template, request, jsonify
+import gradio as gr
 import subprocess
 import os
-import logging
+import tempfile
+import shutil
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+# Create the FastAPI app
+app = FastAPI()
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# Create a data model for the request
+class DeployRequest(BaseModel):
+    repo_url: str
+    modal_name: str = "default_app"  # Default value if not provided
 
-@app.route('/deploy', methods=['POST'])
-def deploy():
+# Function to handle deployment
+def deploy_modal(repo_url, modal_name="default_app"):
+    # Create a temporary directory for the operation
+    temp_dir = tempfile.mkdtemp()
+    original_dir = os.getcwd()
+    
     try:
-        # Get username from form or use default
-        username = request.form.get('username', 'bharani')
+        # Clone the repository
+        clone_process = subprocess.run(
+            ["git", "clone", repo_url, temp_dir],
+            capture_output=True, text=True, check=True
+        )
         
-        # Change to the Modal repository directory
-        os.chdir('/app/Modal')
+        # Change to the temp directory
+        os.chdir(temp_dir)
         
-        # Set environment variables
+        # Set environment variable for the modal_name
         env = os.environ.copy()
-        env['MODAL_APP_NAME'] = username
+        env["MODAL_APP_NAME"] = modal_name
         
-        # Run the deployment command
-        result = subprocess.run(
-            ['modal', 'deploy', 'modal_container.py'],
-            capture_output=True,
-            text=True,
+        # Run modal deploy command with the environment variable
+        deploy_process = subprocess.run(
+            ["modal", "deploy", "modal_container.py"],
+            capture_output=True, text=True,
             env=env
         )
         
-        app.logger.info(f"Deployment stdout: {result.stdout}")
-        app.logger.info(f"Deployment stderr: {result.stderr}")
-        
-        if result.returncode == 0:
-            return jsonify({
-                'success': True,
-                'message': 'Deployment successful',
-                'details': result.stdout
-            })
+        # Prepare the result
+        if deploy_process.returncode == 0:
+            return f"Deployment successful!\n\nOutput:\n{deploy_process.stdout}\n\nDeployed with MODAL_NAME: {modal_name}"
         else:
-            return jsonify({
-                'success': False,
-                'message': 'Deployment failed',
-                'details': result.stderr
-            })
-    
+            return f"Deployment failed.\n\nError:\n{deploy_process.stderr}\n\nOutput:\n{deploy_process.stdout}\n\nAttempted with MODAL_NAME: {modal_name}"
+            
     except Exception as e:
-        app.logger.error(f"Error during deployment: {str(e)}")
-        return jsonify({
-            'success': False,
-            'message': f'Error: {str(e)}'
-        }), 500
+        return f"An error occurred: {str(e)}"
+    finally:
+        # Return to original directory
+        os.chdir(original_dir)
+        # Clean up the temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+# Add a FastAPI endpoint that correctly accepts JSON
+@app.post("/api/deploy")
+async def api_deploy(request: DeployRequest):
+    result = deploy_modal(request.repo_url, request.modal_name)
+    return {"result": result}
+
+# Create Gradio interface
+with gr.Blocks() as demo:
+    gr.Markdown("# Modal Deployment Tool")
+    gr.Markdown("Enter the Git repository URL containing your modal_container.py file and the Modal application name")
+    
+    with gr.Row():
+        repo_url = gr.Textbox(
+            label="Git Repository URL", 
+            placeholder="https://github.com/yourusername/yourrepo.git"
+        )
+    
+    with gr.Row():
+        modal_name = gr.Textbox(
+            label="Modal Application Name",
+            placeholder="my_modal_app",
+            value="default_app"
+        )
+    
+    with gr.Row():
+        deploy_button = gr.Button("Deploy to Modal")
+    
+    output = gr.Textbox(label="Deployment Result", lines=10)
+    
+    deploy_button.click(
+        fn=deploy_modal,
+        inputs=[repo_url, modal_name],
+        outputs=output
+    )
+
+# Mount the Gradio app to FastAPI
+app = gr.mount_gradio_app(app, demo, path="/")
+
+# For direct Gradio launch (development)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
