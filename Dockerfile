@@ -18,7 +18,7 @@ RUN git clone https://github.com/Bharani77/Modal.git /app/Modal
 
 # Set up the Flask application
 COPY app.py /app/
-COPY templates /app/templates
+COPY modal_container.py /app/
 
 # Expose port for Flask
 EXPOSE 5000
