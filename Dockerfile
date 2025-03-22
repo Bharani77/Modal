@@ -1,3 +1,6 @@
+Below is an updated Dockerfile that runs the token setup command and then starts the Flask app—all in one file using a shell command with `sh -c`:
+
+```dockerfile
 # Use Python base image
 FROM python:3.9-slim
 
@@ -26,5 +29,8 @@ EXPOSE 5000
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Command to run the Flask app
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Command to set token and run the Flask app
+CMD sh -c 'modal token set --token-id ak-vPJ3ATtFnoYAVNKB1vdN4l --token-secret as-lsyeIinELaOxnfhiw3mM1v && gunicorn --bind 0.0.0.0:5000 app:app'
+```
+
+In this version, the `CMD` instruction uses `sh -c` to run the token command first and then launches Gunicorn to serve your Flask app.
