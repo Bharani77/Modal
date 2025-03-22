@@ -36,8 +36,8 @@ def run_container_entrypoint():
 @app.function(
     image=image,
     min_containers=1,
-    cpu=2,        # 4 CPU cores
-    memory=2048   # 6GB in MB
+    cpu=1.5,        # 4 CPU cores
+    memory=1500   # 6GB in MB
 )
 @asgi_app()
 def web_app():
