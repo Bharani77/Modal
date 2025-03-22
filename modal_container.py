@@ -38,7 +38,7 @@ def run_container_entrypoint():
     min_containers=1,
     cpu=1.5,        # 4 CPU cores
     memory=1500,   # 6GB in MB
-    spot=True
+    use_spot=True
 )
 @asgi_app()
 def web_app():
