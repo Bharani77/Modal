@@ -1,6 +1,3 @@
-Below is an updated Dockerfile that runs the token setup command and then starts the Flask app—all in one file using a shell command with `sh -c`:
-
-```dockerfile
 # Use Python base image
 FROM python:3.9-slim
 
