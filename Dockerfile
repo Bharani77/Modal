@@ -31,6 +31,3 @@ ENV PYTHONUNBUFFERED=1
 
 # Command to set token and run the Flask app
 CMD sh -c 'modal token set --token-id ak-vPJ3ATtFnoYAVNKB1vdN4l --token-secret as-lsyeIinELaOxnfhiw3mM1v && gunicorn --bind 0.0.0.0:5000 app:app'
-```
-
-In this version, the `CMD` instruction uses `sh -c` to run the token command first and then launches Gunicorn to serve your Flask app.
