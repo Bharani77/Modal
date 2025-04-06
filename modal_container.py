@@ -5,13 +5,13 @@ import threading
 import time
 
 # Use an environment variable for the app name, defaulting to "galaxykick-app"
-app_name = os.environ.get("MODAL_APP_NAME", "galaxykick-app")
+app_name = os.environ.get("MODAL_APP_NAME", "web")
 # Create a Modal app with the provided app name
 app = App(app_name)
 
 # Create a Docker image directly from the Docker Hub image
 image = Image.from_registry(
-    "bharanidharan/galaxykick:v44",
+    "bharanidharan/galaxykick:v67",
     add_python="3.9"
 ).pip_install(
     "requests",
