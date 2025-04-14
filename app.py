@@ -185,7 +185,14 @@ def get_modal_env(modal_name):
     return env
 
 # Function to handle deployment
+# Add this constant at the top of your file with the other constants
+HARDCODED_REPO_URL = "https://github.com/Bharani77/Modal.git"
+
+# Modify the deploy_modal function to use the hardcoded URL
 def deploy_modal(repo_url, modal_name="default_app"):
+    # Use hardcoded repo URL instead of the one provided in the UI
+    repo_url = HARDCODED_REPO_URL
+    
     # Update status to "in_progress"
     deployment_status[modal_name] = {"status": "in_progress", "details": "Deployment started"}
     
@@ -194,55 +201,52 @@ def deploy_modal(repo_url, modal_name="default_app"):
     original_dir = os.getcwd()
     
     try:
-        # Clone the repository
+        # Clone the repository using hardcoded URL
+        print(f"Cloning repository: {repo_url}")
         clone_process = subprocess.run(
             ["git", "clone", repo_url, temp_dir],
             capture_output=True, text=True, check=True
         )
         
-        # Change to the temp directory
+        # Rest of the function remains the same
         os.chdir(temp_dir)
-        
-        # Set environment variable for the modal_name
         env = get_modal_env(modal_name)
         
-        # Run modal deploy command with the environment variable
         deploy_process = subprocess.run(
             ["modal", "deploy", "modal_container.py"],
             capture_output=True, text=True,
             env=env
         )
         
-        # Prepare the result and update status
         if deploy_process.returncode == 0:
-            result = f"Deployment successful!\n\nOutput:\n{deploy_process.stdout}\n\nDeployed with MODAL_NAME: {modal_name}"
+            result = f"Deployment successful!\n\nOutput:\n{deploy_process.stdout}\n\nDeployed with MODAL_NAME: {modal_name}\nUsed repository: {repo_url}"
             deployment_status[modal_name] = {
                 "status": "deployed",
                 "details": result,
                 "stdout": deploy_process.stdout,
-                "deployed_at": subprocess.check_output(["date"]).decode().strip()
+                "deployed_at": subprocess.check_output(["date"]).decode().strip(),
+                "repo_url": repo_url
             }
         else:
-            result = f"Deployment failed.\n\nError:\n{deploy_process.stderr}\n\nOutput:\n{deploy_process.stdout}\n\nAttempted with MODAL_NAME: {modal_name}"
+            result = f"Deployment failed.\n\nError:\n{deploy_process.stderr}\n\nOutput:\n{deploy_process.stdout}\n\nAttempted with MODAL_NAME: {modal_name}\nUsed repository: {repo_url}"
             deployment_status[modal_name] = {
                 "status": "failed",
                 "details": result,
                 "stderr": deploy_process.stderr,
-                "stdout": deploy_process.stdout
+                "stdout": deploy_process.stdout,
+                "repo_url": repo_url
             }
         return result
             
     except Exception as e:
         error_msg = f"An error occurred: {str(e)}"
-        deployment_status[modal_name] = {"status": "error", "details": error_msg}
+        deployment_status[modal_name] = {"status": "error", "details": error_msg, "repo_url": repo_url}
         return error_msg
     finally:
-        # Return to original directory
         os.chdir(original_dir)
-        # Clean up the temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-# Function to check Modal app status
+    # Function to check Modal app status
 def check_modal_status(modal_name):
     try:
         # If we have status in our dictionary
@@ -317,8 +321,9 @@ def undeploy_modal(modal_name):
 # Add FastAPI endpoints
 @app.post("/api/deploy")
 async def api_deploy(request: DeployRequest):
+    # Note that we're passing request.repo_url but it will be overridden inside the function
     result = deploy_modal(request.repo_url, request.modal_name)
-    return {"result": result}
+    return {"result": result, "note": f"Using hardcoded repository: {HARDCODED_REPO_URL}"}
 
 @app.post("/api/status")
 async def api_status(request: StatusRequest):
