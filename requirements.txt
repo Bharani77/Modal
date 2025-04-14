@@ -3,4 +3,3 @@ modal
 gitpython
 uvicorn
 pydantic
-encodings
