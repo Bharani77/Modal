@@ -246,6 +246,7 @@ def deploy_modal(repo_url, modal_name="default_app"):
         os.chdir(original_dir)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+
     # Function to check Modal app status
 def check_modal_status(modal_name):
     try:
