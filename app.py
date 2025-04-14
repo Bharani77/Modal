@@ -4,11 +4,163 @@ import os
 import tempfile
 import shutil
 import json
-from fastapi import FastAPI
+import re
+import time
+from collections import defaultdict
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from typing import List, Callable
+
+# Modal token and secret (replace with environment variables in production)
+MODAL_TOKEN_ID = os.environ.get("MODAL_TOKEN_ID", "ak-VPIrJKnuj04h8zpLJrkMdB")
+MODAL_TOKEN_SECRET = os.environ.get("MODAL_TOKEN_SECRET", "as-XX7bnxLKcEyy1udFdmye4x")
+
+# Explicitly define allowed domains
+ALLOWED_DOMAINS = [
+    "galaxykicklock.web.app",
+    "lightning.ai"
+]
 
 # Create the FastAPI app
 app = FastAPI()
+
+# Rate limiting middleware
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, requests_limit=30, time_window=60):
+        super().__init__(app)
+        self.requests = defaultdict(list)
+        self.requests_limit = requests_limit
+        self.time_window = time_window
+        
+    async def dispatch(self, request: Request, call_next):
+        # Get client IP
+        client_ip = request.client.host
+        
+        # Clean old requests
+        current_time = time.time()
+        self.requests[client_ip] = [req_time for req_time in self.requests[client_ip] 
+                                   if current_time - req_time < self.time_window]
+        
+        # Check if rate limit exceeded
+        if len(self.requests[client_ip]) >= self.requests_limit:
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Too many requests", "message": "Rate limit exceeded. Try again later."}
+            )
+            
+        # Add current request time
+        self.requests[client_ip].append(current_time)
+        
+        # Process request
+        response = await call_next(request)
+        return response
+
+# Custom domain restriction middleware class
+class DomainRestrictionMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, allowed_domains: List[str]):
+        super().__init__(app)
+        self.allowed_domains = allowed_domains
+
+    async def dispatch(self, request: Request, call_next):
+        # Get origin and referer headers
+        origin = request.headers.get("Origin", "")
+        referer = request.headers.get("Referer", "")
+        
+        # Extract domains from headers
+        origin_domain = self._extract_domain(origin) if origin else ""
+        referer_domain = self._extract_domain(referer) if referer else ""
+        
+        # For command-line tools like curl, these might be empty or spoofed
+        # Block if not from allowed domains (no exceptions for development)
+        if origin_domain not in self.allowed_domains and referer_domain not in self.allowed_domains:
+            # Log attempted access for monitoring
+            print(f"Access denied: Origin: {origin}, Referer: {referer}, IP: {request.client.host}")
+            
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "Access denied",
+                    "message": "This service can only be accessed from authorized domains."
+                }
+            )
+        
+        # If allowed, proceed with the request
+        response = await call_next(request)
+        return response
+    
+    def _extract_domain(self, url: str) -> str:
+        """Extract the domain from a URL without protocol, path, or port."""
+        if not url:
+            return ""
+            
+        # Remove protocol
+        if "://" in url:
+            url = url.split("://")[1]
+        
+        # Remove path and query parameters
+        if "/" in url:
+            url = url.split("/")[0]
+            
+        # Remove port if present
+        if ":" in url:
+            url = url.split(":")[0]
+            
+        return url
+
+# Anti-automation middleware to block common API clients
+class AntiAutomationMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Skip check for OPTIONS requests (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        # Check for common API client user agents
+        user_agent = request.headers.get("User-Agent", "").lower()
+        
+        # Block common automation tools
+        blocked_agents = ["curl", "wget", "postman", "insomnia", "python-requests", "httpie"]
+        if any(agent in user_agent for agent in blocked_agents):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access denied", "message": "API client tools not allowed"}
+            )
+            
+        # Additional header checks
+        # Legitimate browsers typically send these headers
+        if not request.headers.get("Accept-Language") and not request.headers.get("Accept"):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access denied", "message": "Missing required headers"}
+            )
+            
+        # Proceed with the request
+        response = await call_next(request)
+        return response
+
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; connect-src *; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "same-origin"
+        
+        return response
+
+# Add middlewares in the correct order
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware, requests_limit=30, time_window=60)  # 30 requests per minute
+app.add_middleware(AntiAutomationMiddleware)
+app.add_middleware(
+    DomainRestrictionMiddleware, 
+    allowed_domains=ALLOWED_DOMAINS
+)
 
 # Create data models for the requests
 class DeployRequest(BaseModel):
@@ -23,6 +175,14 @@ class UndeployRequest(BaseModel):
 
 # Dictionary to store deployment status
 deployment_status = {}
+
+# Helper function to set environment variables for Modal
+def get_modal_env(modal_name):
+    env = os.environ.copy()
+    env["MODAL_APP_NAME"] = modal_name
+    env["MODAL_TOKEN_ID"] = MODAL_TOKEN_ID
+    env["MODAL_TOKEN_SECRET"] = MODAL_TOKEN_SECRET
+    return env
 
 # Function to handle deployment
 def deploy_modal(repo_url, modal_name="default_app"):
@@ -44,8 +204,7 @@ def deploy_modal(repo_url, modal_name="default_app"):
         os.chdir(temp_dir)
         
         # Set environment variable for the modal_name
-        env = os.environ.copy()
-        env["MODAL_APP_NAME"] = modal_name
+        env = get_modal_env(modal_name)
         
         # Run modal deploy command with the environment variable
         deploy_process = subprocess.run(
@@ -91,8 +250,7 @@ def check_modal_status(modal_name):
             return deployment_status[modal_name]
         
         # If not in our dictionary, check with modal CLI
-        env = os.environ.copy()
-        env["MODAL_APP_NAME"] = modal_name
+        env = get_modal_env(modal_name)
         
         status_process = subprocess.run(
             ["modal", "app", "show", modal_name],
@@ -126,8 +284,7 @@ def undeploy_modal(modal_name):
             deployment_status[modal_name] = {"status": "undeploying", "details": "Undeployment in progress"}
         
         # Run modal undeploy command
-        env = os.environ.copy()
-        env["MODAL_APP_NAME"] = modal_name
+        env = get_modal_env(modal_name)
         
         undeploy_process = subprocess.run(
             ["modal", "app", "stop", modal_name],
@@ -172,6 +329,61 @@ async def api_status(request: StatusRequest):
 async def api_undeploy(request: UndeployRequest):
     result = undeploy_modal(request.modal_name)
     return {"result": result}
+
+# Handle OPTIONS requests for CORS preflight
+@app.options("/{path:path}")
+async def handle_options(request: Request, path: str):
+    origin = request.headers.get("Origin", "")
+    domain = ""
+    
+    # Extract domain from origin
+    if origin:
+        if "://" in origin:
+            domain = origin.split("://")[1]
+        if "/" in domain:
+            domain = domain.split("/")[0]
+        if ":" in domain:
+            domain = domain.split(":")[0]
+    
+    # Create response with appropriate headers
+    response = Response()
+    
+    # If origin is from an allowed domain, add CORS headers
+    if domain in ALLOWED_DOMAINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    
+    return response
+
+# Add CORS headers to responses
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    # Process the request
+    response = await call_next(request)
+    
+    # Get the origin from the request headers
+    origin = request.headers.get("Origin", "")
+    domain = ""
+    
+    # Extract domain from origin
+    if origin:
+        if "://" in origin:
+            domain = origin.split("://")[1]
+        if "/" in domain:
+            domain = domain.split("/")[0]
+        if ":" in domain:
+            domain = domain.split(":")[0]
+    
+    # If origin is from an allowed domain, add CORS headers
+    if domain in ALLOWED_DOMAINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    
+    return response
 
 # Create Gradio interface
 with gr.Blocks() as demo:
