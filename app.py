@@ -20,7 +20,9 @@ MODAL_TOKEN_SECRET = os.environ.get("MODAL_TOKEN_SECRET", "as-XX7bnxLKcEyy1udFdm
 # Explicitly define allowed domains
 ALLOWED_DOMAINS = [
     "galaxykicklock.web.app",
-    "lightning.ai"
+    "lightning.ai",
+    "huggingface.co",
+    "buddymaster77hugs-gradiodocker.hf.space"
 ]
 
 # Create the FastAPI app
@@ -202,7 +204,6 @@ def deploy_modal(repo_url, modal_name="default_app"):
     
     try:
         # Clone the repository using hardcoded URL
-        print(f"Cloning repository: {repo_url}")
         clone_process = subprocess.run(
             ["git", "clone", repo_url, temp_dir],
             capture_output=True, text=True, check=True
