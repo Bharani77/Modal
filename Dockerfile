@@ -1,30 +1,24 @@
-# Use Python base image
+# Dockerfile
 FROM python:3.9-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install git and other dependencies
-RUN apt-get update && \
-    apt-get install -y git curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages
-RUN pip install --no-cache-dir flask modal gunicorn
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Clone the repository
-RUN git clone https://github.com/Bharani77/Modal.git /app/Modal
+# Copy application code
+COPY app.py .
 
-# Set up the Flask application
-COPY app.py /app/
-COPY modal_container.py /app/
+# Expose the port Gradio runs on
+EXPOSE 7860
 
-# Expose port for Flask
-EXPOSE 5000
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
-# Command to set token and run the Flask app
-CMD sh -c 'modal token set --token-id ak-vPJ3ATtFnoYAVNKB1vdN4l --token-secret as-lsyeIinELaOxnfhiw3mM1v && gunicorn --bind 0.0.0.0:5000 app:app'
+# Command to run the application
+CMD ["python", "app.py"]
