@@ -4,6 +4,7 @@ import subprocess
 import threading
 import time
 import socket
+from urllib.parse import urlparse
 
 # Use an environment variable for the app name, defaulting to "web"
 app_name = os.environ.get("MODAL_APP_NAME", "web")
@@ -65,7 +66,7 @@ def web_app():
     
     fastapp = FastAPI()
     
-    # Define allowed origins
+    # Define allowed origins - exact domains that are allowed
     ALLOWED_ORIGINS = [
         "galaxykicklock.web.app",
         "lightning.ai",
@@ -75,11 +76,23 @@ def web_app():
         "modal.com"
     ]
     
+    # Convert to a set for faster lookups
+    ALLOWED_ORIGINS_SET = set(ALLOWED_ORIGINS)
+    
+    # Add full URLs to CORS middleware (both http and https)
+    CORS_ALLOWED_ORIGINS = []
+    for origin in ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(f"https://{origin}")
+        CORS_ALLOWED_ORIGINS.append(f"http://{origin}")
+        # Also include subdomains
+        if "." in origin:
+            CORS_ALLOWED_ORIGINS.append(f"https://*.{origin}")
+            CORS_ALLOWED_ORIGINS.append(f"http://*.{origin}")
+    
     # Add CORS middleware with restricted origins
     fastapp.add_middleware(
         CORSMiddleware,
-        allow_origins=[f"https://{origin}" for origin in ALLOWED_ORIGINS] + 
-                     [f"http://{origin}" for origin in ALLOWED_ORIGINS],
+        allow_origins=CORS_ALLOWED_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -115,24 +128,65 @@ def web_app():
         if not container_service_ready:
             logger.warning("Container service not detected after timeout, proceeding anyway")
     
+    # Helper function to extract domain from URL
+    def extract_domain(url):
+        if not url:
+            return None
+        
+        # Add scheme if not present
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+            
+        try:
+            parsed_url = urlparse(url)
+            domain = parsed_url.netloc
+            
+            # Remove port if present
+            if ':' in domain:
+                domain = domain.split(':')[0]
+                
+            # Remove 'www.' prefix if present
+            if domain.startswith('www.'):
+                domain = domain[4:]
+                
+            return domain
+        except:
+            return None
+    
+    # Helper function to check if the domain is in allowed list
+    def is_domain_allowed(domain):
+        if not domain:
+            return False
+            
+        # Check exact match
+        if domain in ALLOWED_ORIGINS_SET:
+            return True
+            
+        # Check for subdomain
+        for allowed in ALLOWED_ORIGINS_SET:
+            if domain.endswith('.' + allowed):
+                return True
+                
+        return False
+    
     # Helper function to check if the origin is allowed
     def is_origin_allowed(request: Request) -> bool:
-        origin = request.headers.get("origin", "")
-        if not origin:
-            # If no origin header, check referer as fallback
-            referer = request.headers.get("referer", "")
-            if referer:
-                for allowed in ALLOWED_ORIGINS:
-                    if allowed in referer:
-                        return True
-            # For development purposes, allow requests with no origin or referer
-            # You might want to remove this in production
+        # Extract and check Origin header
+        origin = request.headers.get("origin")
+        origin_domain = extract_domain(origin)
+        if origin_domain and is_domain_allowed(origin_domain):
+            logger.info(f"Access allowed for origin: {origin}")
             return True
-        
-        # Check if origin matches any allowed domain
-        for allowed in ALLOWED_ORIGINS:
-            if allowed in origin:
-                return True
+            
+        # If no origin, check Referer as fallback
+        referer = request.headers.get("referer")
+        referer_domain = extract_domain(referer)
+        if referer_domain and is_domain_allowed(referer_domain):
+            logger.info(f"Access allowed for referer: {referer}")
+            return True
+            
+        # No valid origin or referer with allowed domain found
+        logger.warning(f"Access denied. Origin: {origin}, Referer: {referer}")
         return False
     
     @fastapp.get("/")
@@ -143,7 +197,12 @@ def web_app():
         return {"message": "GalaxyKick API is running. Access endpoints using the proper paths."}
     
     @fastapp.get("/status")
-    async def status():
+    async def status(request: Request):
+        # Even status endpoint should be restricted
+        if not is_origin_allowed(request):
+            logger.warning(f"Access denied for status check from origin: {request.headers.get('origin', 'Unknown')}")
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
+            
         is_ready = is_port_open(7860)
         return {
             "api_status": "running",
