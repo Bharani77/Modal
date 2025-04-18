@@ -51,11 +51,7 @@ def web_app():
     # Add CORS middleware to handle OPTIONS requests and add CORS headers
     fastapp.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "galaxykicklock.web.app",
-            "lightning.ai",
-            "huggingface.co",
-            "buddymaster77hugs-gradiodocker.hf.space"],  # Allows all origins, you can restrict this for security
+        allow_origins=["*"],  # Allows all origins, you can restrict this for security
         allow_credentials=True,
         allow_methods=["*"],  # Allows all methods including OPTIONS
         allow_headers=["*"],  # Allows all headers
