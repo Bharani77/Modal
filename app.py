@@ -18,12 +18,7 @@ MODAL_TOKEN_ID = os.environ.get("MODAL_TOKEN_ID", "ak-VPIrJKnuj04h8zpLJrkMdB")
 MODAL_TOKEN_SECRET = os.environ.get("MODAL_TOKEN_SECRET", "as-XX7bnxLKcEyy1udFdmye4x")
 
 # Explicitly define allowed domains
-ALLOWED_DOMAINS = [
-    "galaxykicklock.web.app",
-    "lightning.ai",
-    "huggingface.co",
-    "buddymaster77hugs-gradiodocker.hf.space"
-]
+ALLOWED_DOMAINS = ["*"]
 
 # Create the FastAPI app
 app = FastAPI()
