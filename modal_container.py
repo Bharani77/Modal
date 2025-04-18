@@ -36,25 +36,36 @@ def run_container_entrypoint():
 @app.function(
     image=image,
     min_containers=1,
-    cpu=1.5,        # 4 CPU cores
-    memory=1500   # 6GB in MB
+    cpu=1.5,        # 1.5 CPU cores
+    memory=1500     # 1500MB RAM
 )
 @asgi_app()
 def web_app():
-    from fastapi import FastAPI, Request
-    from fastapi.responses import StreamingResponse
+    from fastapi import FastAPI, Request, HTTPException
+    from fastapi.responses import StreamingResponse, JSONResponse
     from fastapi.middleware.cors import CORSMiddleware
     import httpx
     
     fastapp = FastAPI()
     
-    # Add CORS middleware to handle OPTIONS requests and add CORS headers
+    # Define allowed origins
+    ALLOWED_ORIGINS = [
+        "galaxykicklock.web.app",
+        "lightning.ai",
+        "huggingface.co",
+        "buddymaster77hugs-gradiodocker.hf.space",
+        "bharani77--bharanitest-web-app.modal.run",
+        "modal.com"
+    ]
+    
+    # Add CORS middleware with restricted origins
     fastapp.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allows all origins, you can restrict this for security
+        allow_origins=[f"https://{origin}" for origin in ALLOWED_ORIGINS] + 
+                     [f"http://{origin}" for origin in ALLOWED_ORIGINS],
         allow_credentials=True,
-        allow_methods=["*"],  # Allows all methods including OPTIONS
-        allow_headers=["*"],  # Allows all headers
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     
     @fastapp.on_event("startup")
@@ -65,12 +76,36 @@ def web_app():
         time.sleep(10)
         print("FastAPI startup complete, container service should be running")
     
+    # Helper function to check if the origin is allowed
+    def is_origin_allowed(request: Request) -> bool:
+        origin = request.headers.get("origin", "")
+        if not origin:
+            # If no origin header, check referer as fallback
+            referer = request.headers.get("referer", "")
+            if referer:
+                for allowed in ALLOWED_ORIGINS:
+                    if allowed in referer:
+                        return True
+            return False
+        
+        # Check if origin matches any allowed domain
+        for allowed in ALLOWED_ORIGINS:
+            if allowed in origin:
+                return True
+        return False
+    
     @fastapp.get("/")
-    async def root():
+    async def root(request: Request):
+        if not is_origin_allowed(request):
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
         return {"message": "GalaxyKick API is running. Access endpoints using the proper paths."}
     
     @fastapp.get("/{path:path}")
     async def get_route(path: str, request: Request):
+        # Validate origin before processing request
+        if not is_origin_allowed(request):
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
+            
         url = f"http://localhost:7860/{path}"
         params = dict(request.query_params)
         try:
@@ -82,10 +117,17 @@ def web_app():
                     headers=dict(response.headers)
                 )
         except Exception as e:
-            return {"error": f"Failed to connect to container service: {str(e)}"}
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to connect to container service: {str(e)}"}
+            )
     
     @fastapp.post("/{path:path}")
     async def post_route(path: str, request: Request):
+        # Validate origin before processing request
+        if not is_origin_allowed(request):
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
+            
         url = f"http://localhost:7860/{path}"
         body = await request.body()
         headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
@@ -103,12 +145,16 @@ def web_app():
                     headers=dict(response.headers)
                 )
         except Exception as e:
-            return {"error": f"Failed to connect to container service: {str(e)}"}
-        
-    # You can also add an explicit OPTIONS handler if needed
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to connect to container service: {str(e)}"}
+            )
+    
     @fastapp.options("/{path:path}")
-    async def options_route(path: str):
-        # This is handled by the CORS middleware, but adding it explicitly for clarity
+    async def options_route(path: str, request: Request):
+        # Validate origin for OPTIONS requests as well
+        if not is_origin_allowed(request):
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
         return {}
             
     return fastapp
