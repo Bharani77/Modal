@@ -13,7 +13,7 @@ app = App(app_name)
 
 # Create a Docker image directly from the Docker Hub image
 image = Image.from_registry(
-    "bharanidharan/galaxykick:v81",
+    "bharanidharan/galaxykick:v82",
     add_python="3.9"
 ).pip_install(
     "requests",
