@@ -13,7 +13,7 @@ app = App(app_name)
 
 # Create a Docker image directly from the Docker Hub image
 image = Image.from_registry(
-    "bharanidharan/galaxykick:v96",
+    "bharanidharan/galaxykick:v99",
     add_python="3.9"
 ).pip_install(
     "requests",
@@ -50,9 +50,7 @@ def run_container_entrypoint():
     image=image,
     min_containers=1,
     cpu=1.5,
-    memory=1500,
-    keep_warm=1,  # Keep at least one container warm
-    timeout=86400  # Set a very long timeout (24 hours)
+    memory=1500
 )
 @asgi_app()
 def web_app():
