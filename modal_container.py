@@ -32,23 +32,27 @@ def is_port_open(port, host='localhost', timeout=1):
     sock.close()
     return result == 0
 
-# This function will execute the container's entrypoint/command
+# This function will execute the container's entrypoint/command and keep it running
 def run_container_entrypoint():
-    print("Starting container service...")
-    try:
-        if os.path.exists("/galaxybackend/app.py"):
-            subprocess.Popen(["python3", "/galaxybackend/app.py"])
-            print("Container service process started")
-        else:
-            print("Warning: /galaxybackend/app.py not found")
-    except Exception as e:
-        print(f"Error starting container process: {e}")
-    print("Container service started (or attempted to start)")
+    while True:
+        print("Starting container service...")
+        try:
+            if os.path.exists("/galaxybackend/app.py"):
+                process = subprocess.Popen(["python3", "/galaxybackend/app.py"])
+                process.wait()
+                print("Container service process exited with code", process.returncode)
+            else:
+                print("Warning: /galaxybackend/app.py not found")
+                break
+        except Exception as e:
+            print(f"Error starting container process: {e}")
+        time.sleep(5)  # Wait 5 seconds before restarting
 
 # Create a web app that serves the Docker container
 @app.function(
     image=image,
     min_containers=1,
+    max_containers=1,  # Added to prevent autoscaling
     cpu=4,
     memory=4500
 )
@@ -105,7 +109,7 @@ def web_app():
     def startup_event():
         global container_service_ready
         
-        # Start the container service
+        # Start the container service in a background thread
         thread = threading.Thread(target=run_container_entrypoint)
         thread.daemon = True
         thread.start()
