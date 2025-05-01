@@ -53,8 +53,8 @@ def run_container_entrypoint():
     image=image,
     min_containers=1,
     max_containers=1,  # Added to prevent autoscaling
-    cpu=8,
-    memory=8000
+    cpu=1.5,
+    memory=2048
 )
 @asgi_app()
 def web_app():
