@@ -4,10 +4,11 @@ import subprocess
 import threading
 import time
 import socket
+import json
 from urllib.parse import urlparse
 
 # Use an environment variable for the app name, defaulting to "web"
-app_name = os.environ.get("MODAL_APP_NAME", "web")
+app_name = os.environ.get("MODAL_APP_NAME", "raja")
 # Create a Modal app with the provided app name
 app = App(app_name)
 
@@ -32,21 +33,51 @@ def is_port_open(port, host='localhost', timeout=1):
     sock.close()
     return result == 0
 
-# This function will execute the container's entrypoint/command and keep it running
-def run_container_entrypoint():
+# Global variable to store variables passed from the app
+app_variables = {}
+
+# Function to start the container and keep it running in the background
+def run_container_background():
+    # Ensure PM2 is installed and available
+    try:
+        subprocess.run(["pm2", "--version"], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("PM2 not found, installing...")
+        subprocess.run(["npm", "install", "-g", "pm2"], check=True)
+    
+    print("Container is running in background mode")
+    
+    # Keep the thread alive
     while True:
-        print("Starting container service...")
-        try:
-            if os.path.exists("/galaxybackend/app.py"):
-                process = subprocess.Popen(["python3", "/galaxybackend/app.py"])
-                process.wait()
-                print("Container service process exited with code", process.returncode)
-            else:
-                print("Warning: /galaxybackend/app.py not found")
-                break
-        except Exception as e:
-            print(f"Error starting container process: {e}")
-        time.sleep(5)  # Wait 5 seconds before restarting
+        time.sleep(10)  # Just keep the thread alive
+
+# Function to start galaxy_1.js with PM2 and provided variables
+def start_galaxy_with_variables(variables):
+    print(f"Starting galaxy_1.js with variables: {variables}")
+    
+    # Convert variables to environment variables for PM2
+    env_vars = " ".join([f"{k}={v}" for k, v in variables.items()])
+    
+    try:
+        # Stop any existing process first
+        subprocess.run("pm2 stop galaxy_1 || true", shell=True)
+        subprocess.run("pm2 delete galaxy_1 || true", shell=True)
+        
+        # Start with the new variables
+        cmd = f"pm2 start galaxy_1.js --name galaxy_1 --update-env -- {env_vars}"
+        print(f"Executing command: {cmd}")
+        
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        print(f"PM2 start result: {result.stdout}")
+        
+        if result.returncode != 0:
+            print(f"Error running PM2: {result.stderr}")
+            return {"success": False, "error": result.stderr}
+            
+        return {"success": True, "message": "Galaxy application started successfully"}
+    except Exception as e:
+        print(f"Exception while starting galaxy_1.js: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 # Create a web app that serves the Docker container
 @app.function(
@@ -77,6 +108,7 @@ def web_app():
         "huggingface.co",
         "buddymaster77hugs-gradiodocker.hf.space",
         "bharani77--bharanitest-web-app.modal.run",
+        "bharani77--raja-web-app.modal.run",
         "modal.com"
     ]
     
@@ -102,35 +134,22 @@ def web_app():
         allow_headers=["*"],
     )
     
-    # Global variable to track container service status
-    container_service_ready = False
+    # Global variable to track container background service status
+    container_background_ready = False
     
     @fastapp.on_event("startup")
     def startup_event():
-        global container_service_ready
+        global container_background_ready
         
-        # Start the container service in a background thread
-        thread = threading.Thread(target=run_container_entrypoint)
+        # Start the container in background mode
+        logger.info("Starting container in background mode...")
+        thread = threading.Thread(target=run_container_background)
         thread.daemon = True
         thread.start()
         
-        # Wait for container service to be ready with a timeout
-        max_wait_time = 60  # Maximum wait time in seconds
-        wait_interval = 2   # Check every 2 seconds
-        total_waited = 0
-        
-        logger.info("Waiting for container service to start...")
-        while total_waited < max_wait_time:
-            if is_port_open(7860):
-                container_service_ready = True
-                logger.info(f"Container service is ready after {total_waited} seconds")
-                break
-            time.sleep(wait_interval)
-            total_waited += wait_interval
-            logger.info(f"Waiting for container service... ({total_waited}/{max_wait_time}s)")
-        
-        if not container_service_ready:
-            logger.warning("Container service not detected after timeout, proceeding anyway")
+        # Mark container as ready
+        container_background_ready = True
+        logger.info("Container background service started")
     
     # Helper function to extract domain from URL
     def extract_domain(url):
@@ -207,12 +226,77 @@ def web_app():
             logger.warning(f"Access denied for status check from origin: {request.headers.get('origin', 'Unknown')}")
             raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
             
-        is_ready = is_port_open(7860)
+        # Check PM2 status
+        try:
+            pm2_result = subprocess.run("pm2 list --format json", shell=True, capture_output=True, text=True)
+            pm2_status = "running" if pm2_result.returncode == 0 else "not running"
+            
+            # Try to parse PM2 json output
+            try:
+                pm2_processes = json.loads(pm2_result.stdout)
+                galaxy_process = next((p for p in pm2_processes if p.get("name") == "galaxy_1"), None)
+                galaxy_status = galaxy_process.get("pm2_env", {}).get("status", "unknown") if galaxy_process else "not found"
+            except:
+                galaxy_status = "unknown"
+                
+        except Exception as e:
+            pm2_status = f"error: {str(e)}"
+            galaxy_status = "unknown"
+            
         return {
             "api_status": "running",
-            "container_service": "running" if is_ready else "not ready",
-            "container_port_open": is_ready
+            "container_background": "running" if container_background_ready else "not ready",
+            "pm2_status": pm2_status,
+            "galaxy_app_status": galaxy_status
         }
+    
+    # New endpoint to start galaxy_1.js with provided variables
+    @fastapp.post("/start")
+    async def start_galaxy_app(request: Request):
+        # Validate origin before processing request
+        if not is_origin_allowed(request):
+            logger.warning(f"Access denied for /start from origin: {request.headers.get('origin', 'Unknown')}")
+            raise HTTPException(status_code=403, detail="Access denied: Origin not allowed")
+        
+        # Check if container is ready
+        if not container_background_ready:
+            logger.error("Container background service not ready")
+            return JSONResponse(
+                status_code=503,
+                content={"success": False, "error": "Container background service is not ready"}
+            )
+            
+        try:
+            # Get variables from request body
+            variables = await request.json()
+            logger.info(f"Received start request with variables: {variables}")
+            
+            # Start galaxy_1.js with PM2 and the provided variables
+            result = start_galaxy_with_variables(variables)
+            
+            if result["success"]:
+                return JSONResponse(
+                    status_code=200,
+                    content={"success": True, "message": result["message"]}
+                )
+            else:
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "error": result["error"]}
+                )
+                
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON in request body")
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "Invalid JSON in request body"}
+            )
+        except Exception as e:
+            logger.error(f"Error processing start request: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "error": f"Failed to process request: {str(e)}"}
+            )
     
     @fastapp.get("/{path:path}")
     async def get_route(path: str, request: Request):
@@ -224,12 +308,22 @@ def web_app():
         url = f"http://localhost:7860/{path}"
         params = dict(request.query_params)
         
-        # Check if container service is available
+        # Check if port 7860 is open
         if not is_port_open(7860):
-            logger.error(f"Container service not available on port 7860 for GET /{path}")
+            logger.warning(f"Port 7860 not open for GET /{path}")
+            # Instead of returning an error, we could check if the galaxy app is running through PM2
+            try:
+                pm2_result = subprocess.run("pm2 list | grep galaxy_1", shell=True, capture_output=True)
+                if pm2_result.returncode == 0:
+                    logger.info("Galaxy app is running through PM2 but port 7860 is not open")
+                else:
+                    logger.warning("Galaxy app is not running through PM2")
+            except Exception as e:
+                logger.error(f"Error checking PM2 status: {str(e)}")
+            
             return JSONResponse(
                 status_code=503,
-                content={"error": "Container service is not available or still starting"}
+                content={"error": "Container service is not available on port 7860"}
             )
             
         try:
@@ -270,12 +364,12 @@ def web_app():
             
         url = f"http://localhost:7860/{path}"
         
-        # Check if container service is available
+        # Check if port 7860 is open
         if not is_port_open(7860):
-            logger.error(f"Container service not available on port 7860 for POST /{path}")
+            logger.warning(f"Port 7860 not open for POST /{path}")
             return JSONResponse(
                 status_code=503,
-                content={"error": "Container service is not available or still starting"}
+                content={"error": "Container service is not available on port 7860"}
             )
         
         try:
